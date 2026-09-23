@@ -30,9 +30,13 @@ public class ChatHistory {
         List<ChatMessage> full = new ArrayList<>();
 
         var systemMessage = new ChatMessage("system", "system", PromptGenerator.generatePrompt(player));
-        full.add(systemMessage); // 保证system始终在首位
+        full.add(systemMessage);
         full.addAll(history);
         return full;
+    }
+
+    public List<ChatMessage> getHistoryOnly() {
+        return new ArrayList<>(history);
     }
 
     public void addMessage(String role, String name, String content) {

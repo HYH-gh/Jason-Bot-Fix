@@ -52,6 +52,29 @@ public class Config {
             .comment("Whether to provide in-game information to the bot")
             .define("useInGameInformation", true);
 
+    private static final ForgeConfigSpec.IntValue COMMAND_PERMISSION_LEVEL = BUILDER
+            .comment("Permission level for commands executed by the bot. 0-4, default 2 (same as command blocks).")
+            .defineInRange("commandPermissionLevel", 2, 0, 4);
+
+    private static final ForgeConfigSpec.ConfigValue<List<? extends String>> COMMAND_BLACKLIST = BUILDER
+            .comment("Commands that the bot is not allowed to execute. Commands are matched by their root name (e.g. \"op\" blocks \"/op player\").")
+            .defineList("commandBlacklist",
+                    List.of("stop", "kick", "ban", "ban-ip", "pardon", "pardon-ip",
+                            "op", "deop", "whitelist", "save-all", "save-off", "save-on", "debug"),
+                    o -> o instanceof String);
+
+    private static final ForgeConfigSpec.BooleanValue WEB_SEARCH_ENABLED = BUILDER
+            .comment("Whether to allow the bot to search the web for real-time information.")
+            .define("webSearchEnabled", false);
+
+    private static final ForgeConfigSpec.ConfigValue<String> WEB_SEARCH_ENDPOINT = BUILDER
+            .comment("Web search API endpoint. Uses POST with JSON body in the format {\"query\":\"...\"}. Compatible with AnySearch API.")
+            .define("webSearchEndpoint", "Enter your search API endpoint here");
+
+    private static final ForgeConfigSpec.ConfigValue<String> WEB_SEARCH_API_KEY = BUILDER
+            .comment("API key for the web search service. Sent as 'Authorization: Bearer' header.")
+            .define("webSearchAPIKey", "Enter your web search API key here");
+
     public static final ForgeConfigSpec CONFIG = BUILDER.build();
 
     public static String APIEndpoint;
@@ -64,6 +87,11 @@ public class Config {
     public static int maxHistorySize;
     public static List<? extends String> wakeNames;
     public static boolean useInGameInformation;
+    public static int commandPermissionLevel;
+    public static List<? extends String> commandBlacklist;
+    public static boolean webSearchEnabled;
+    public static String webSearchEndpoint;
+    public static String webSearchAPIKey;
 
     @SubscribeEvent
     public static void onLoad(ModConfigEvent event) {
@@ -77,5 +105,10 @@ public class Config {
         maxHistorySize = MAX_HISTORY_SIZE.get();
         wakeNames = WAKE_NAMES.get();
         useInGameInformation = USE_IN_GAME_INFORMATION.get();
+        commandPermissionLevel = COMMAND_PERMISSION_LEVEL.get();
+        commandBlacklist = COMMAND_BLACKLIST.get();
+        webSearchEnabled = WEB_SEARCH_ENABLED.get();
+        webSearchEndpoint = WEB_SEARCH_ENDPOINT.get();
+        webSearchAPIKey = WEB_SEARCH_API_KEY.get();
     }
 }

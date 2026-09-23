@@ -1,0 +1,452 @@
+package io.github.cpearl0.jasonbot.bot;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import io.github.cpearl0.jasonbot.Config;
+import io.github.cpearl0.jasonbot.JasonBot;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.EntitySelector;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
+public class GameTools {
+
+    private static final int MAX_TOOL_ROUNDS = 5;
+
+    public static int getMaxToolRounds() {
+        return MAX_TOOL_ROUNDS;
+    }
+
+    public static JsonArray getToolDefinitions() {
+        JsonArray tools = new JsonArray();
+
+        tools.add(createTool(
+                "get_player_info",
+                "获取当前与你对话的玩家的游戏内基本信息，包括：游戏模式、所在维度、坐标、生物群系、生命值、饥饿值、饱腹度、经验等级。当玩家询问\"我在哪\"\"我的状态\"等问题时使用。",
+                new JsonObject()
+        ));
+
+        tools.add(createTool(
+                "get_player_equipment",
+                "获取当前与你对话的玩家的装备信息，包括：主手物品及NBT、副手物品及NBT、护甲栏物品。当玩家询问\"我拿着什么\"\"我穿了什么\"等问题时使用。",
+                new JsonObject()
+        ));
+
+        tools.add(createTool(
+                "get_looking_at",
+                "获取当前与你对话的玩家视线正指向的方块或流体。当玩家询问\"我面前是什么\"\"这是什么方块\"等问题时使用。",
+                new JsonObject()
+        ));
+
+        tools.add(createTool(
+                "get_server_info",
+                "获取当前服务器信息，包括：在线玩家人数、距离当前玩家最近的玩家姓名与位置。",
+                new JsonObject()
+        ));
+
+        tools.add(createTool(
+                "get_real_time",
+                "获取现实世界当前时间。仅在玩家与你讨论现实世界话题时使用，与游戏内时间无关。",
+                new JsonObject()
+        ));
+
+        tools.add(createTool(
+                "execute_command",
+                "执行一条Minecraft原版指令。当玩家要求你执行具体操作（如给予物品、修改时间、传送等）时使用。注意：指令执行结果会在聊天栏中显示，你可以告知玩家查看。某些敏感指令已被禁用。",
+                createCommandParams()
+        ));
+
+        if (Config.webSearchEnabled) {
+            tools.add(createTool(
+                    "web_search",
+                    "搜索互联网获取实时信息。当玩家询问的问题超出你的知识范围（如最新Minecraft版本特性、模组攻略、合成配方或者闲聊提问等需要联网查询的内容）时使用。",
+                    createSearchParams()
+            ));
+        }
+
+        return tools;
+    }
+
+    private static JsonObject createCommandParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+
+        JsonObject properties = new JsonObject();
+        JsonObject commandProp = new JsonObject();
+        commandProp.addProperty("type", "string");
+        commandProp.addProperty("description", "要执行的Minecraft指令，不需要带斜杠(/)前缀。例如: give Steve minecraft:diamond 1");
+        properties.add("command", commandProp);
+
+        JsonArray required = new JsonArray();
+        required.add("command");
+
+        params.add("properties", properties);
+        params.add("required", required);
+        return params;
+    }
+
+    private static JsonObject createSearchParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+
+        JsonObject properties = new JsonObject();
+        JsonObject queryProp = new JsonObject();
+        queryProp.addProperty("type", "string");
+        queryProp.addProperty("description", "搜索关键词，尽量使用Minecraft相关的英文关键词以获得更好的搜索结果");
+        properties.add("query", queryProp);
+
+        JsonArray required = new JsonArray();
+        required.add("query");
+
+        params.add("properties", properties);
+        params.add("required", required);
+        return params;
+    }
+
+    public static String executeTool(ServerPlayer player, String toolName, String arguments) {
+        return switch (toolName) {
+            case "get_player_info" -> executeGetPlayerInfo(player);
+            case "get_player_equipment" -> executeGetPlayerEquipment(player);
+            case "get_looking_at" -> executeGetLookingAt(player);
+            case "get_server_info" -> executeGetServerInfo(player);
+            case "get_real_time" -> executeGetRealTime();
+            case "execute_command" -> executeCommandTool(player, arguments);
+            case "web_search" -> executeWebSearch(arguments);
+            default -> "{\"error\": \"未知工具: " + toolName + "\"}";
+        };
+    }
+
+    private static JsonObject createTool(String name, String description, JsonObject parameters) {
+        JsonObject tool = new JsonObject();
+        tool.addProperty("type", "function");
+
+        JsonObject function = new JsonObject();
+        function.addProperty("name", name);
+        function.addProperty("description", description);
+        function.add("parameters", parameters);
+
+        tool.add("function", function);
+        return tool;
+    }
+
+    private static String executeGetPlayerInfo(ServerPlayer player) {
+        var level = player.level();
+        var pos = player.blockPosition();
+
+        JsonObject result = new JsonObject();
+        result.addProperty("dimension", level.dimension().location().toString());
+        result.addProperty("game_time", level.getDayTime());
+        result.addProperty("position", "x:%d y:%d z:%d".formatted(pos.getX(), pos.getY(), pos.getZ()));
+
+        var biome = level.getBiome(pos).unwrap()
+                .map(key -> key.location().toString(), ubiome -> "unknown");
+        result.addProperty("biome", biome);
+
+        result.addProperty("health", player.getHealth());
+        result.addProperty("max_health", player.getMaxHealth());
+        result.addProperty("hunger", player.getFoodData().getFoodLevel());
+        result.addProperty("saturation", player.getFoodData().getSaturationLevel());
+        result.addProperty("experience_level", player.experienceLevel);
+        result.addProperty("game_mode", player.gameMode.getGameModeForPlayer().getName());
+
+        return result.toString();
+    }
+
+    private static String executeGetPlayerEquipment(ServerPlayer player) {
+        JsonObject result = new JsonObject();
+
+        var mainhand = player.getMainHandItem();
+        JsonObject mainhandObj = new JsonObject();
+        mainhandObj.addProperty("item", mainhand.getItem().toString());
+        if (mainhand.getTag() != null) {
+            mainhandObj.addProperty("nbt", mainhand.getTag().toString());
+        }
+        result.add("mainhand", mainhandObj);
+
+        var offhand = player.getOffhandItem();
+        JsonObject offhandObj = new JsonObject();
+        offhandObj.addProperty("item", offhand.getItem().toString());
+        if (offhand.getTag() != null) {
+            offhandObj.addProperty("nbt", offhand.getTag().toString());
+        }
+        result.add("offhand", offhandObj);
+
+        JsonArray armorArr = new JsonArray();
+        for (var armorPiece : player.getArmorSlots()) {
+            JsonObject piece = new JsonObject();
+            piece.addProperty("item", armorPiece.getItem().toString());
+            if (armorPiece.getTag() != null) {
+                piece.addProperty("nbt", armorPiece.getTag().toString());
+            }
+            armorArr.add(piece);
+        }
+        result.add("armor", armorArr);
+
+        return result.toString();
+    }
+
+    private static String executeGetLookingAt(ServerPlayer player) {
+        var level = player.level();
+        JsonObject result = new JsonObject();
+
+        var block = player.pick(20.0, 0.0F, false);
+        if (block.getType() == HitResult.Type.BLOCK) {
+            var blockpos = ((BlockHitResult) block).getBlockPos();
+            var blockstate = level.getBlockState(blockpos);
+            var blockname = BuiltInRegistries.BLOCK.getKey(blockstate.getBlock());
+            result.addProperty("looking_at_block", blockname != null ? blockname.toString() : "unknown");
+        } else {
+            result.addProperty("looking_at_block", "none");
+        }
+
+        var liquid = player.pick(20.0, 0.0F, true);
+        if (liquid.getType() == HitResult.Type.BLOCK) {
+            var blockpos = ((BlockHitResult) liquid).getBlockPos();
+            var fluidstate = level.getFluidState(blockpos);
+            var fluidname = BuiltInRegistries.FLUID.getKey(fluidstate.getType());
+            if (fluidname != null && !fluidname.toString().equals("minecraft:empty")) {
+                result.addProperty("looking_at_fluid", fluidname.toString());
+            }
+        }
+
+        return result.toString();
+    }
+
+    private static String executeGetServerInfo(ServerPlayer player) {
+        var level = player.level();
+        JsonObject result = new JsonObject();
+
+        result.addProperty("online_players", level.players().size());
+
+        var nearestPlayer = level.getNearestPlayer(
+                player.getX(), player.getY(), player.getZ(), -1.0,
+                p -> p != player && EntitySelector.NO_SPECTATORS.test(p));
+        if (nearestPlayer != null) {
+            JsonObject nearest = new JsonObject();
+            nearest.addProperty("name", nearestPlayer.getDisplayName().getString());
+            var pos = nearestPlayer.blockPosition();
+            nearest.addProperty("position", "x:%d y:%d z:%d".formatted(pos.getX(), pos.getY(), pos.getZ()));
+            result.add("nearest_player", nearest);
+        } else {
+            result.add("nearest_player", null);
+        }
+
+        return result.toString();
+    }
+
+    private static String executeGetRealTime() {
+        JsonObject result = new JsonObject();
+        result.addProperty("real_time", LocalDateTime.now()
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        return result.toString();
+    }
+
+    private static String executeCommandTool(ServerPlayer player, String arguments) {
+        JsonObject args = JsonParser.parseString(arguments).getAsJsonObject();
+        String command = args.get("command").getAsString().trim();
+
+        if (command.startsWith("/")) {
+            command = command.substring(1).trim();
+        }
+
+        if (command.isEmpty()) {
+            return "{\"error\": \"指令为空\"}";
+        }
+
+        String commandRoot = command.split(" ")[0].toLowerCase();
+        for (String blacklisted : Config.commandBlacklist) {
+            if (blacklisted.equalsIgnoreCase(commandRoot)) {
+                JsonObject blocked = new JsonObject();
+                blocked.addProperty("command", command);
+                blocked.addProperty("success", false);
+                blocked.addProperty("error", "指令 " + commandRoot + " 在黑名单中，已被禁止执行");
+                return blocked.toString();
+            }
+        }
+
+        try {
+            var server = player.getServer();
+            int result = server.getCommands().performPrefixedCommand(
+                    server.createCommandSourceStack().withPermission(Config.commandPermissionLevel),
+                    command
+            );
+
+            JsonObject response = new JsonObject();
+            response.addProperty("command", command);
+            response.addProperty("success", result > 0);
+            response.addProperty("result_count", result);
+            return response.toString();
+        } catch (Exception e) {
+            JsonObject error = new JsonObject();
+            error.addProperty("command", command);
+            error.addProperty("success", false);
+            error.addProperty("error", "指令执行异常: " + e.getMessage());
+            return error.toString();
+        }
+    }
+
+    private static String executeWebSearch(String arguments) {
+        JsonObject args = JsonParser.parseString(arguments).getAsJsonObject();
+        String query = args.get("query").getAsString().trim();
+
+        if (query.isEmpty()) {
+            return "{\"error\": \"搜索关键词为空\"}";
+        }
+
+        String endpoint = Config.webSearchEndpoint;
+        if (endpoint == null || endpoint.isBlank() || endpoint.startsWith("Enter")) {
+            return "{\"error\": \"未配置搜索API端点\"}";
+        }
+
+        String apiKey = Config.webSearchAPIKey;
+        if (apiKey == null || apiKey.isBlank() || apiKey.startsWith("Enter")) {
+            return "{\"error\": \"未配置搜索API密钥\"}";
+        }
+
+        try {
+            JsonObject requestBody = new JsonObject();
+            requestBody.addProperty("query", query);
+            requestBody.addProperty("max_results", 5);
+            String bodyJson = requestBody.toString();
+
+            URL url = new URL(endpoint);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(10000);
+            connection.setDoOutput(true);
+
+            try (OutputStream os = connection.getOutputStream()) {
+                os.write(bodyJson.getBytes(StandardCharsets.UTF_8));
+            }
+
+            int statusCode = connection.getResponseCode();
+            if (statusCode != 200) {
+                StringBuilder errorBody = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(connection.getErrorStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        errorBody.append(line);
+                    }
+                } catch (Exception ignored) {
+                }
+
+                JsonObject error = new JsonObject();
+                error.addProperty("query", query);
+                error.addProperty("success", false);
+                error.addProperty("error", "搜索API返回状态码: " + statusCode);
+                if (errorBody.length() > 0) {
+                    error.addProperty("detail", errorBody.toString());
+                }
+                return error.toString();
+            }
+
+            StringBuilder responseBody = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBody.append(line);
+                }
+            }
+
+            return parseSearchResults(responseBody.toString(), query);
+
+        } catch (IOException e) {
+            JsonObject error = new JsonObject();
+            error.addProperty("query", query);
+            error.addProperty("success", false);
+            error.addProperty("error", "搜索请求失败: " + e.getMessage());
+            return error.toString();
+        } catch (Exception e) {
+            JasonBot.LOGGER.error("Web search error", e);
+            JsonObject error = new JsonObject();
+            error.addProperty("query", query);
+            error.addProperty("success", false);
+            error.addProperty("error", "搜索异常: " + e.getMessage());
+            return error.toString();
+        }
+    }
+
+    private static String parseSearchResults(String rawJson, String query) {
+        try {
+            JsonObject response = JsonParser.parseString(rawJson).getAsJsonObject();
+
+            JsonArray results = null;
+            for (String key : new String[]{"results", "data", "items", "documents", "organic_results"}) {
+                if (response.has(key) && response.get(key).isJsonArray()) {
+                    results = response.getAsJsonArray(key);
+                    break;
+                }
+            }
+
+            if (results != null && results.size() > 0) {
+                JsonObject structured = new JsonObject();
+                structured.addProperty("query", query);
+                structured.addProperty("success", true);
+                structured.addProperty("result_count", results.size());
+
+                JsonArray parsedResults = new JsonArray();
+                int usedChars = 0;
+                int maxChars = 6000;
+
+                for (JsonElement elem : results) {
+                    if (!elem.isJsonObject()) continue;
+                    JsonObject item = elem.getAsJsonObject();
+                    JsonObject parsed = new JsonObject();
+
+                    if (item.has("title")) parsed.add("title", item.get("title"));
+                    else if (item.has("name")) parsed.add("title", item.get("name"));
+
+                    if (item.has("url")) parsed.add("url", item.get("url"));
+                    else if (item.has("link")) parsed.add("url", item.get("link"));
+
+                    if (item.has("snippet")) parsed.add("snippet", item.get("snippet"));
+                    else if (item.has("description")) parsed.add("snippet", item.get("description"));
+                    else if (item.has("content")) {
+                        String content = item.get("content").getAsString();
+                        if (content.length() > 300) {
+                            content = content.substring(0, 300) + "...";
+                        }
+                        parsed.addProperty("snippet", content);
+                    } else if (item.has("snippet_content")) {
+                        parsed.add("snippet", item.get("snippet_content"));
+                    }
+
+                    String parsedStr = parsed.toString();
+                    if (usedChars + parsedStr.length() > maxChars) break;
+                    parsedResults.add(parsed);
+                    usedChars += parsedStr.length();
+                }
+
+                structured.add("results", parsedResults);
+                return structured.toString();
+            }
+        } catch (Exception e) {
+            JasonBot.LOGGER.debug("Failed to parse structured search results, returning raw", e);
+        }
+
+        String truncated = rawJson.length() > 8000 ? rawJson.substring(0, 8000) : rawJson;
+        JsonObject fallback = new JsonObject();
+        fallback.addProperty("query", query);
+        fallback.addProperty("success", true);
+        fallback.addProperty("raw_response", truncated);
+        return fallback.toString();
+    }
+}
