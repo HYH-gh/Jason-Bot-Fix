@@ -10,6 +10,7 @@
 - [配置文件详解](#配置文件详解)
 - [模组架构与实现](#模组架构与实现)
 - [AI 工具列表](#ai-工具列表)
+- [调试模式](#调试模式)
 - [更新日志](#更新日志)
 - [后续移植建议](#后续移植建议)
 - [许可证](#许可证)
@@ -38,6 +39,24 @@
 - 基于大语言模型的多轮对话，支持语境记忆
 - 可自定义 AI 身份、性格、系统提示词
 - 支持多唤醒词（默认 "Jason" 和 "杰森"），消息以唤醒词开头或结尾时触发
+- **流式分句输出**：AI 回复按句子分块延迟显示，模拟打字效果，可配置延迟间隔
+
+### 响应格式化
+- AI 回复支持 Markdown 风格格式（`**粗体**`、`*斜体*`、`` `代码` ``、`# 标题`、列表）
+- 自动转换为 Minecraft 颜色代码（§l、§o、§7、§n 等）
+- 可配置全局 AI 回复颜色前缀（默认 §b 水蓝色）
+
+### 主动聊天（Proactive Chat）
+AI 不仅被动响应 @ 唤醒，还能在以下场景主动发言：
+
+| 主动触发类型 | 说明 |
+|---|---|
+| 欢迎消息 | 玩家加入服务器时自动欢迎 |
+| 死亡评论 | 玩家死亡时发表评论 |
+| 累计触发 | 聊天消息积累到阈值后 AI 主动参与讨论 |
+| 空闲触发 | 聊天空闲一段时间后 AI 主动开启话题 |
+
+所有主动聊天功能均可在配置文件中独立开关和调节。
 
 ### 游戏状态感知（Tool Calling）
 AI **不会**一次性收到所有游戏信息，而是按需调用工具获取：
@@ -45,9 +64,10 @@ AI **不会**一次性收到所有游戏信息，而是按需调用工具获取�
 | 工具 | 功能 |
 |---|---|
 | `get_player_info` | 查询玩家维度、坐标、生物群系、生命值、饥饿值、经验、游戏模式 |
-| `get_player_equipment` | 查询玩家主手/副手物品及完整 NBT 数据、护甲栏 |
-| `get_looking_at` | 射线检测玩家视线指向的方块或流体 |
+| `get_player_equipment` | 查询玩家主手/副手物品及护甲栏，支持 `detailed` 参数控制 NBT 数据 |
+| `get_looking_at` | 射线检测玩家视线指向的方块或流体，支持 `detailed` 参数获取方块实体 NBT |
 | `get_server_info` | 查询服务器在线人数、最近的玩家姓名与坐标 |
+| `get_online_players` | 获取当前在线玩家列表 |
 | `get_real_time` | 获取现实世界当前时间 |
 
 ### 指令执行
@@ -64,6 +84,8 @@ AI **不会**一次性收到所有游戏信息，而是按需调用工具获取�
 - 所有功能均可在配置文件中独立开关
 - 指令黑名单防止恶意操作
 - 错误处理完善，异常不会导致服务器崩溃
+- **调试模式**：可选择开启调试模式，使用 `/jasontool` 命令直接测试所有 AI 工具
+- **思考指示器**：等待 AI 回复时在 Action Bar 显示思考提示，不影响聊天栏
 
 ---
 
@@ -150,6 +172,35 @@ Jason: [调用 web_search] 重锤（Mace）是1.21的新武器，需要1个重�
 | `webSearchEndpoint` | String | 占位文本 | 搜索 API 端点（兼容 AnySearch API） |
 | `webSearchAPIKey` | String | 占位文本 | 搜索 API 密钥 |
 
+### 流式输出配置
+
+| 配置项 | 类型 | 范围 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `streamingEnabled` | Boolean | — | `true` | 是否启用流式分句输出 |
+| `streamingChunkDelayMs` | Integer | 100 ~ 5000 | `500` | 每个句子分块之间的延迟（毫秒） |
+| `showAINameOnEachChunk` | Boolean | — | `false` | 每个分块前是否显示 AI 名称（如 `[Jason]`） |
+| `aiResponseColor` | String | — | `§b` | AI 回复的全局 § 颜色代码前缀 |
+| `thinkingIndicatorEnabled` | Boolean | — | `true` | 是否显示思考指示器 |
+| `thinkingIndicatorText` | String | — | `§7§o[Jason 正在思考...]§r` | 思考提示文本，支持颜色代码 |
+
+### 主动聊天配置
+
+| 配置项 | 类型 | 范围 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `proactiveEnabled` | Boolean | — | `true` | 主动聊天功能总开关 |
+| `proactiveWelcomeEnabled` | Boolean | — | `true` | 是否欢迎新加入的玩家 |
+| `proactiveDeathCommentEnabled` | Boolean | — | `true` | 是否评论玩家死亡 |
+| `proactiveBacklogThreshold` | Integer | 0 ~ 100 | `8` | 聊天积累消息数阈值，达到后 AI 主动发言。设为 0 禁用 |
+| `proactiveBacklogIncludeChat` | Boolean | — | `false` | 累计触发时是否附带缓冲的聊天内容作为上下文 |
+| `proactiveIdleEnabled` | Boolean | — | `true` | 是否启用空闲主动聊天 |
+| `proactiveIdleIntervalSeconds` | Integer | 60 ~ 7200 | `600` | 聊天空闲多少秒后 AI 主动发言 |
+
+### 调试模式配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `debugMode` | Boolean | `false` | 启用后可使用 `/jasontool` 命令测试所有 AI 工具 |
+
 ---
 
 ## 模组架构与实现
@@ -161,12 +212,16 @@ src/main/java/io/github/cpearl0/jasonbot/
 ├── JasonBot.java              模组主入口，注册配置
 ├── Config.java                配置文件管理（ForgeConfigSpec）
 ├── event/
-│   └── EventHandler.java      事件监听（聊天唤醒、服务器启停）
+│   └── EventHandler.java      事件监听（聊天唤醒、玩家加入/死亡、服务器启停）
+├── command/
+│   └── DebugCommand.java      调试命令 /jasontool（调试模式下可用）
 └── bot/
     ├── PromptGenerator.java    动态生成系统提示词（附带工具使用指引）
     ├── ChatHistory.java        对话历史管理（线程安全的环形队列）
-    ├── AsyncAIChat.java        异步 AI API 通信核心（支持 Tool Calling 循环）
-    └── GameTools.java          6 个 Tool 的定义与执行逻辑
+    ├── AsyncAIChat.java        异步 AI API 通信核心（支持 Tool Calling 循环、流式输出）
+    ├── GameTools.java          9 个 Tool 的定义与执行逻辑（含线程安全调度）
+    ├── ResponseFormatter.java  AI 回复格式化（Markdown → Minecraft § 颜色代码）
+    └── ProactiveChat.java      主动聊天管理（欢迎、死亡评论、累计触发、空闲触发）
 ```
 
 ### 核心工作流程
@@ -175,7 +230,7 @@ src/main/java/io/github/cpearl0/jasonbot/
 玩家发送聊天消息
     │
     ▼
-EventHandler.onChat() ─── 不匹配 ──→ 忽略
+EventHandler.onChat() ─── 不匹配唤醒词 ──→ 积累到 backlog 缓冲区 → 达阈值触发主动聊天
     │ 匹配唤醒词
     ▼
 AsyncAIChat.chat(player, message)
@@ -186,15 +241,26 @@ AsyncAIChat.chat(player, message)
     ▼
 ━━━━━━━━ HTTP POST 到 AI API ━━━━━━━━
     │
-    ├── AI 返回文本 → 直接回复玩家
+    ├── AI 返回文本:
+    │   ├── ResponseFormatter 格式化（Markdown → § 颜色代码）
+    │   └── 按句子分块延迟发送到聊天栏（流式输出）
     │
     ├── AI 返回 tool_calls:
-    │   ├── 执行对应 Tool（GameTools.executeTool）
+    │   ├── 调度到服务端主线程执行 Tool（线程安全）
     │   ├── 将工具结果发回 AI 继续推理
     │   └── 最多循环 5 轮
     │
     ▼
 以 FakePlayer 身份广播回复到服务器聊天栏
+
+═══════════════════════════════════
+
+主动聊天触发流程：
+
+玩家加入服务器 ──→ ProactiveChat 触发欢迎消息
+玩家死亡       ──→ ProactiveChat 触发死亡评论
+聊天累计达阈值  ──→ ProactiveChat 触发主动参与
+聊天空闲超时   ──→ ProactiveChat 定时器触发话题
 ```
 
 ### 关键设计决策
@@ -207,6 +273,10 @@ AsyncAIChat.chat(player, message)
 
 **原生 HTTP 通信**：不依赖第三方 HTTP 库（如 OkHttp），直接使用 `HttpURLConnection` 进行 API 通信，减少依赖冲突风险。
 
+**线程安全的工具执行**：后台线程调用世界数据（如 `getBlockEntity`）会返回 null，因此 `GameTools.executeTool` 会自动检测当前线程，非服务端主线程时通过 `server.submit()` 调度到主线程执行，确保 `blockEntity`、玩家数据等世界访问正确。
+
+**响应格式化器**：`ResponseFormatter` 将 AI 返回的 Markdown 格式文本转换为 Minecraft 可识别的 § 颜色代码，支持粗体（`**`）、斜体（`*`）、代码（`` ` ``）、标题（`#`）和列表（`-`），让 AI 回复在游戏中更具可读性。
+
 ---
 
 ## AI 工具列表
@@ -217,15 +287,21 @@ AsyncAIChat.chat(player, message)
 
 ### get_player_equipment
 - **触发场景**："我拿着什么？""我穿了什么装备？"
-- **返回数据**：主手物品及完整 NBT、副手物品及 NBT、护甲栏全部物品及 NBT
+- **参数**：`detailed`（boolean，可选，默认 false）— 设为 `true` 返回物品完整 NBT 标签
+- **返回数据**：主手物品、副手物品、护甲栏全部物品（含 count、item 标识、可选 NBT）
 
 ### get_looking_at
-- **触发场景**："面前是什么方块？""这里能挖吗？"
-- **返回数据**：20 格视线射线检测结果，返回方块或流体的注册名
+- **触发场景**："面前是什么方块？""这里能挖吗？""箱子里有什么？"
+- **参数**：`detailed`（boolean，可选，默认 false）— 设为 `true` 返回方块实体的完整 NBT（如箱子内容物）
+- **返回数据**：20 格视线射线检测结果，返回方块或流体的注册名；`detailed=true` 时额外返回 `block_entity_nbt`
 
 ### get_server_info
 - **触发场景**："服务器有多少人？""谁离我最近？"
 - **返回数据**：在线人数、最近玩家的姓名与坐标
+
+### get_online_players
+- **触发场景**："谁在线？""现在有几个人在玩？"
+- **返回数据**：所有在线玩家的姓名列表
 
 ### get_real_time
 - **触发场景**：讨论现实世界时间
@@ -243,9 +319,84 @@ AsyncAIChat.chat(player, message)
 
 ---
 
+## 调试模式
+
+在配置文件中将 `debugMode` 设为 `true` 后，拥有 OP 权限（权限等级 ≥ 2）的玩家可以使用 `/jasontool` 命令直接测试 AI 工具：
+
+### 命令列表
+
+| 命令 | 说明 |
+|---|---|
+| `/jasontool list` | 列出所有可用的 AI 工具及其描述 |
+| `/jasontool <工具名>` | 以默认参数（`{}`）执行指定工具并显示结果 |
+| `/jasontool <工具名> <JSON参数>` | 以自定义 JSON 参数执行工具（如 `get_looking_at {"detailed": true}`） |
+
+### 使用示例
+
+```
+/jasontool list
+→ 列出所有 9 个工具
+
+/jasontool get_player_info
+→ 执行 get_player_info，显示玩家状态
+
+/jasontool get_looking_at {"detailed": true}
+→ 查看面前方块，包含完整 NBT（如箱子内容物）
+
+/jasontool get_player_equipment {"detailed": true}
+→ 查看装备，包含物品完整 NBT
+```
+
+> **注意**：调试模式仅应在开发测试阶段开启，正式服务器上建议关闭以保障安全性。
+
+---
+
 ## 更新日志
 
-### v0.1.0（当前版本）
+### v0.2.0（当前版本）
+
+**新增：主动聊天系统**
+- AI 可在玩家加入时发送欢迎消息
+- AI 可在玩家死亡时发表评论
+- 聊天消息积累到阈值后 AI 主动参与讨论
+- 聊天空闲一段时间后 AI 主动发起话题
+- 所有主动聊天功能可独立开关和调节参数
+
+**新增：流式分句输出**
+- AI 回复按句子分块延迟输出，模拟打字效果
+- 可配置分块延迟（streamingChunkDelayMs）
+- 可配置 AI 名称显示策略（showAINameOnEachChunk）
+
+**新增：响应格式化**
+- 支持 Markdown 格式自动转换为 Minecraft § 颜色代码
+- 粗体（`**text**`）、斜体（`*text*`）、代码（`` `code` ``）、标题、列表
+- 可配置全局 AI 回复颜色（aiResponseColor）
+
+**新增：思考指示器**
+- 等待 AI 回复时在 Action Bar 显示思考提示
+- 可配置提示文本和颜色
+
+**新增：调试模式**
+- 配置文件 `debugMode` 开关控制
+- `/jasontool` 命令支持测试所有 AI 工具
+- 支持自定义 JSON 参数
+
+**新增：工具参数化**
+- `get_player_equipment` 和 `get_looking_at` 新增 `detailed` 参数
+- `detailed: true` 时返回完整 NBT 数据（物品标签、方块实体内容）
+- 支持多种 AI 输入格式的健壮解析
+
+**修复：线程安全问题**
+- 工具执行自动调度到服务端主线程
+- 修复 AI 调用 `get_looking_at` 时 `blockEntity` 始终为 null 的问题
+- 修复 `get_player_equipment` 等需要世界访问的工具
+
+**改进：聊天体验**
+- 触发对话的玩家也能在聊天栏看到 AI 回复（方便回顾）
+- AI 回复所有分句均应用颜色样式
+- 思考指示器显示在 Action Bar，不干扰聊天栏消息顺序
+
+### v0.1.0
 
 **全新架构：Tool Calling**
 - 将 Prompt 拼接游戏信息的方式重构为 Function Calling 模式
@@ -299,8 +450,11 @@ jason-bot/
 
 ### 功能扩展建议
 
+- [x] **流式响应（SSE）**：支持 AI 分句延迟输出，提升交互体验
+- [x] **响应格式化**：Markdown 格式自动转换为 Minecraft 颜色代码
+- [x] **主动聊天**：AI 在欢迎、死亡、空闲等场景主动发言
+- [x] **调试命令**：`/jasontool` 命令直接测试工具调用
 - [ ] **每个玩家独立记忆**：`Map<UUID, ChatHistory>` 代替全局单例
-- [ ] **流式响应（SSE）**：支持 AI 逐字输出，提升交互体验
 - [ ] **多语言扩展**：支持更多语言的系统提示词和 Tool 描述
 - [ ] **速率限制**：防止玩家滥用 AI 功能
 - [ ] **黑名单/白名单玩家**：控制哪些玩家可以使用 AI 功能

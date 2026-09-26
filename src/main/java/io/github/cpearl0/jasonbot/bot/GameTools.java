@@ -7,6 +7,7 @@ import com.google.gson.JsonParser;
 import io.github.cpearl0.jasonbot.Config;
 import io.github.cpearl0.jasonbot.JasonBot;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.phys.BlockHitResult;
@@ -41,19 +42,25 @@ public class GameTools {
 
         tools.add(createTool(
                 "get_player_equipment",
-                "获取当前与你对话的玩家的装备信息，包括：主手物品及NBT、副手物品及NBT、护甲栏物品。当玩家询问\"我拿着什么\"\"我穿了什么\"等问题时使用。",
-                new JsonObject()
+                "获取当前与你对话的玩家的装备信息，包括：主手物品、副手物品、护甲栏物品。当玩家询问\"我拿着什么\"\"我穿了什么\"等问题时使用。可通过detailed参数控制是否返回详细NBT数据，默认为false仅返回基础信息。参数示例（注意格式）：{\"detailed\": false}",
+                createEquipmentParams()
         ));
 
         tools.add(createTool(
                 "get_looking_at",
-                "获取当前与你对话的玩家视线正指向的方块或流体。当玩家询问\"我面前是什么\"\"这是什么方块\"等问题时使用。",
-                new JsonObject()
+                "获取当前与你对话的玩家视线正指向的方块或流体。当玩家询问\"我面前是什么\"\"这是什么方块\"等问题时使用。可通过detailed参数控制是否返回方块实体（如箱子内容、告示牌文字等）的NBT数据。参数示例（注意格式）：{\"detailed\": true}",
+                createLookingAtParams()
         ));
 
         tools.add(createTool(
                 "get_server_info",
                 "获取当前服务器信息，包括：在线玩家人数、距离当前玩家最近的玩家姓名与位置。",
+                new JsonObject()
+        ));
+
+        tools.add(createTool(
+                "get_online_players",
+                "获取服务器所有在线玩家的完整列表，包括每个玩家的名称和UUID。当玩家询问\"有哪些人在线\"\"服务器都有谁\"时使用。",
                 new JsonObject()
         ));
 
@@ -116,12 +123,62 @@ public class GameTools {
         return params;
     }
 
+    private static JsonObject createEquipmentParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+
+        JsonObject properties = new JsonObject();
+        JsonObject detailedProp = new JsonObject();
+        detailedProp.addProperty("type", "boolean");
+        detailedProp.addProperty("description", "是否返回物品的详细NBT数据。默认为false，仅返回物品名称和数量。设为true时额外返回完整NBT标签。");
+        properties.add("detailed", detailedProp);
+
+        params.add("properties", properties);
+        return params;
+    }
+
+    private static JsonObject createLookingAtParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+
+        JsonObject properties = new JsonObject();
+        JsonObject detailedProp = new JsonObject();
+        detailedProp.addProperty("type", "boolean");
+        detailedProp.addProperty("description", "是否返回方块实体（如箱子、告示牌、熔炉等）的详细NBT数据。默认为false，仅返回方块/流体名称。");
+        properties.add("detailed", detailedProp);
+
+        params.add("properties", properties);
+        return params;
+    }
+
     public static String executeTool(ServerPlayer player, String toolName, String arguments) {
+        JasonBot.LOGGER.info("Tool call: {} args={}", toolName, arguments);
+
+        MinecraftServer server = player.getServer();
+        if (server != null && !server.isSameThread()) {
+            JasonBot.LOGGER.info("Dispatching tool {} to server thread (current: {})",
+                    toolName, Thread.currentThread().getName());
+            try {
+                return server.submit(() -> executeToolDirectly(player, toolName, arguments))
+                        .get(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "{\"error\": \"工具执行被中断\"}";
+            } catch (Exception e) {
+                JasonBot.LOGGER.error("Tool {} execution on server thread failed: {}", toolName, e.getMessage());
+                return "{\"error\": \"工具执行失败: " + e.getMessage() + "\"}";
+            }
+        }
+        return executeToolDirectly(player, toolName, arguments);
+    }
+
+    private static String executeToolDirectly(ServerPlayer player, String toolName, String arguments) {
         return switch (toolName) {
             case "get_player_info" -> executeGetPlayerInfo(player);
-            case "get_player_equipment" -> executeGetPlayerEquipment(player);
-            case "get_looking_at" -> executeGetLookingAt(player);
+            case "get_player_equipment" -> executeGetPlayerEquipment(player, arguments);
+            case "get_looking_at" -> executeGetLookingAt(player, arguments);
             case "get_server_info" -> executeGetServerInfo(player);
+            case "get_online_players" -> executeGetOnlinePlayers(player);
             case "get_real_time" -> executeGetRealTime();
             case "execute_command" -> executeCommandTool(player, arguments);
             case "web_search" -> executeWebSearch(arguments);
@@ -165,42 +222,78 @@ public class GameTools {
         return result.toString();
     }
 
-    private static String executeGetPlayerEquipment(ServerPlayer player) {
+    private static String executeGetPlayerEquipment(ServerPlayer player, String arguments) {
+        boolean detailed = parseDetailedFlag(arguments);
+        JasonBot.LOGGER.info("get_player_equipment: detailed={}", detailed);
+
         JsonObject result = new JsonObject();
+        result.addProperty("detailed", detailed);
 
         var mainhand = player.getMainHandItem();
-        JsonObject mainhandObj = new JsonObject();
-        mainhandObj.addProperty("item", mainhand.getItem().toString());
-        if (mainhand.getTag() != null) {
-            mainhandObj.addProperty("nbt", mainhand.getTag().toString());
-        }
-        result.add("mainhand", mainhandObj);
+        result.add("mainhand", buildItemJson(mainhand, detailed));
 
         var offhand = player.getOffhandItem();
-        JsonObject offhandObj = new JsonObject();
-        offhandObj.addProperty("item", offhand.getItem().toString());
-        if (offhand.getTag() != null) {
-            offhandObj.addProperty("nbt", offhand.getTag().toString());
-        }
-        result.add("offhand", offhandObj);
+        result.add("offhand", buildItemJson(offhand, detailed));
 
         JsonArray armorArr = new JsonArray();
         for (var armorPiece : player.getArmorSlots()) {
-            JsonObject piece = new JsonObject();
-            piece.addProperty("item", armorPiece.getItem().toString());
-            if (armorPiece.getTag() != null) {
-                piece.addProperty("nbt", armorPiece.getTag().toString());
-            }
-            armorArr.add(piece);
+            armorArr.add(buildItemJson(armorPiece, detailed));
         }
         result.add("armor", armorArr);
 
         return result.toString();
     }
 
-    private static String executeGetLookingAt(ServerPlayer player) {
+    /**
+     * Robust parser for the "detailed" boolean flag from AI tool arguments.
+     * AI models may send non-standard formats like bare "true", "\"true\"", etc.
+     * Handles: {"detailed":true}, {"detailed":"true"}, true, "true"
+     */
+    private static boolean parseDetailedFlag(String arguments) {
+        if (arguments == null || arguments.isEmpty()) {
+            return false;
+        }
+        String trimmed = arguments.trim();
+
+        // Standard path: {"detailed": true/false}
+        try {
+            JsonElement parsed = JsonParser.parseString(trimmed);
+            if (parsed.isJsonObject()) {
+                JsonObject args = parsed.getAsJsonObject();
+                if (args.has("detailed")) {
+                    return args.get("detailed").getAsBoolean();
+                }
+                return false;
+            }
+            // Bare boolean/string: the entire arguments is just "true" or "\"true\""
+            if (parsed.isJsonPrimitive()) {
+                boolean val = parsed.getAsBoolean();
+                JasonBot.LOGGER.warn("Tool 'detailed' flag received non-standard format: '{}', parsed as: {}", trimmed, val);
+                return val;
+            }
+        } catch (Exception e) {
+            JasonBot.LOGGER.warn("Tool 'detailed' flag parse failed for '{}': {}", trimmed, e.getMessage());
+        }
+        return false;
+    }
+
+    private static JsonObject buildItemJson(net.minecraft.world.item.ItemStack stack, boolean detailed) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("item", stack.getItem().toString());
+        obj.addProperty("count", stack.getCount());
+        if (detailed) {
+            obj.addProperty("nbt", stack.serializeNBT().toString());
+        }
+        return obj;
+    }
+
+    private static String executeGetLookingAt(ServerPlayer player, String arguments) {
+        boolean detailed = parseDetailedFlag(arguments);
+        JasonBot.LOGGER.info("get_looking_at: detailed={}, looking from {}", detailed, player.blockPosition());
+
         var level = player.level();
         JsonObject result = new JsonObject();
+        result.addProperty("detailed", detailed);
 
         var block = player.pick(20.0, 0.0F, false);
         if (block.getType() == HitResult.Type.BLOCK) {
@@ -208,7 +301,21 @@ public class GameTools {
             var blockstate = level.getBlockState(blockpos);
             var blockname = BuiltInRegistries.BLOCK.getKey(blockstate.getBlock());
             result.addProperty("looking_at_block", blockname != null ? blockname.toString() : "unknown");
+
+            if (detailed) {
+                var blockEntity = level.getBlockEntity(blockpos);
+                JasonBot.LOGGER.info("get_looking_at: detailed=true, blockEntity at {}: {}",
+                        blockpos, blockEntity != null ? blockEntity.getClass().getSimpleName() : "null");
+                if (blockEntity != null) {
+                    var tag = blockEntity.saveWithFullMetadata();
+                    String nbtStr = tag.toString();
+                    JasonBot.LOGGER.info("get_looking_at: NBT (first 300 chars): {}",
+                            nbtStr.substring(0, Math.min(nbtStr.length(), 300)));
+                    result.addProperty("block_entity_nbt", nbtStr);
+                }
+            }
         } else {
+            JasonBot.LOGGER.info("get_looking_at: no block hit, type={}", block.getType());
             result.addProperty("looking_at_block", "none");
         }
 
@@ -244,6 +351,23 @@ public class GameTools {
             result.add("nearest_player", null);
         }
 
+        return result.toString();
+    }
+
+    private static String executeGetOnlinePlayers(ServerPlayer player) {
+        var level = player.level();
+        JsonObject result = new JsonObject();
+        JsonArray playersArr = new JsonArray();
+
+        for (var p : level.players()) {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("name", p.getDisplayName().getString());
+            entry.addProperty("uuid", p.getUUID().toString());
+            playersArr.add(entry);
+        }
+
+        result.addProperty("online_count", level.players().size());
+        result.add("players", playersArr);
         return result.toString();
     }
 
